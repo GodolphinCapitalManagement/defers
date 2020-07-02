@@ -1,2 +1,6 @@
-results/*.pkl
+*.pkl
+*.feather
+*.o
 *.ipynb
+*.ipynb_checkpoints
+*.pyc
