@@ -4,3 +4,6 @@
 *.ipynb
 *.ipynb_checkpoints
 *.pyc
+
+stan/*
+__pycache__
