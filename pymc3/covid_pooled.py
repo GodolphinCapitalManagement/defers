@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 cspell: disable-*-
 # ---
 # jupyter:
 #   jupytext:
@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.5.0
+#       jupytext_version: 1.3.2
 #   kernelspec:
 #     display_name: dev
 #     language: python
@@ -54,7 +54,6 @@ import geopandas as gpd
 
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-import patsy
 
 # +
 # %matplotlib inline
@@ -67,8 +66,6 @@ import seaborn as sns
 from sklearn import set_config
 set_config(display='diagram')
 
-# %run "/home/gsinha/admin/db/dev/Python/projects/models/defers/common.py"
-
 sns.set()
 plt.rcParams.update({
     "font.family": "Source Sans Pro",
@@ -78,6 +75,8 @@ plt.rcParams.update({
 })
 
 external_files_dir = "/home/gsinha/admin/db/dev/Python/projects/models/data/"
+
+# %run "/home/gsinha/admin/db/dev/Python/projects/models/defers/common.py"
 
 RANDOM_SEED = 8112
 np.random.seed(370)
@@ -123,7 +122,33 @@ if override_asof_date:
 print(f'As Of Date: {ASOF_DATE}')
 # -
 
+# ### Definitions
+
+# +
 ORIGINATOR = None
+
+omap = {"LC": "I", "PR": "II", "ALL": None}
+
+base_dir = "/home/gsinha/admin/db/dev/Python/projects/models/"
+results_dir = {
+  "LC": base_dir + "defers/pymc3/" + "originator_" + omap["LC"] + "/results",
+  "PR": base_dir + "defers/pymc3/" + "originator_" + omap["PR"] + "/results",
+  "ALL": base_dir + "defers/pymc3/" + "results/"
+}
+
+numeric_features = [
+    "fico", "original_balance", "dti", "stated_monthly_income", "age", "pct_ic"
+]
+std_numeric_features = ["std_" + x for x in numeric_features]
+
+categorical_features = [
+    "grade", "purpose", "employment_status", "term", "home_ownership", "loanstatus",
+]
+
+group_features = ["st_code", "originator"]
+group_type = "crossed"
+
+dep_var = "defer"
 
 # +
 # %%time
@@ -136,23 +161,14 @@ for i in ["PR", "LC"]:
 hard_df = pd.concat(df, sort=False, ignore_index=True)
 hard_df.drop_duplicates(subset=["loan_id"], keep="first", inplace=True, ignore_index=True)
 # -
+dq_tbl = summary_by_group(
+    ["originator", "loanstatus"], dep_var, hard_df
+)
+dq_tbl.index.names = ["Originator", "DQ Status"]
+
+dq_tbl
+
 # ### Nelson-Aalen Hazards
-
-# +
-numeric_features = [
-    "fico", "original_balance", "dti", "stated_monthly_income", "age", "pct_ic"
-]
-std_numeric_features = ["std_" + x for x in numeric_features]
-
-categorical_features = [
-    "grade", "purpose", "employment_status", "term", "home_ownership", 
-]
-
-group_features = ["st_code", "originator"]
-group_type = "nested"
-
-dep_var = "defer"
-omap = {"LC": "I", "PR": "II", "ALL": None}
 
 # +
 T = hard_df.dur
@@ -189,11 +205,6 @@ hard_df_train = hard_df.groupby(['state', 'originator', dep_var], group_keys=Fal
 ).reset_index().copy()
 hard_df_test = hard_df[~hard_df["loan_id"].isin(hard_df_train["loan_id"])].reset_index().copy()
 
-knots = hard_df[
-    hard_df[dep_var]
-]["dur"].quantile(q=[0.10, 0.25, 0.5, 0.75, 0.90]).values
-knots
-
 # ### Transform
 
 # +
@@ -202,6 +213,7 @@ knots
 p_s_1 = Pipeline(
     steps=[
         ('select_originator', SelectOriginator(ORIGINATOR)),
+        ('winsorize', Winsorize(["stated_monthly_income"], p=0.01)),
         ('wide_to_long', WideToLong(id_col="note_id", duration_col="dur", event_col=dep_var)),
         ('add_state_macro_vars', AddStateMacroVars(ic_long_df)),
     ]
@@ -216,6 +228,7 @@ p_s_2 = Pipeline(
     steps=[
         ('hier_index', HierarchicalIndex(group_features, group_type)),
         ('standardize', Standardize(numeric_features)),
+        ('poly', OrthoPolyFeatures(std_numeric_features[:4], degree=3)),
         ("interval", IntervalInterceptFeatures()),
     ]
 )
@@ -228,7 +241,6 @@ p_s_2
 p_s_3 = Pipeline(
     steps=[
         ('dummy', Dummy(categorical_features)),
-        ('cross', Interaction(["grade", "std_fico"])),
     ]
 )
 s_3_df = p_s_3.fit_transform(s_2_df)
@@ -250,9 +262,12 @@ generic = True
 if generic:
     obs_covars = [
         x for x in s_3_df.columns if search("T.", x) and not search("grade", x)
-    ] + std_numeric_features[:-1]
+    ] + np.array(p_s_2.named_steps.poly.colnames).ravel().tolist() + [std_numeric_features[-2]]
 else:
-    obs_covars = [x for x in s_3_df.columns if search("T.", x)] + std_numeric_features[:-1]
+    obs_covars = (
+        [x for x in s_3_df.columns if search("T.", x)] + 
+        np.array(p_s_2.named_steps.poly.colnames).ravel().tolist() + [std_numeric_features[-2]]
+    )
 
 # +
 exp_covars = "exposure"
@@ -272,30 +287,36 @@ print(
     f'Observation-level features {X.shape[1]:>3,.0f}'
 )
 
-fig, ax = plt.subplots(1,1, figsize=(5, 5))
+fig, ax = plt.subplots(1,1, figsize=(10, 10))
 corr = s_3_df[obs_covars].corr() #stage_three_df.iloc[:, :35].corr() 
 mask = np.tri(*corr.shape).T 
 sns.heatmap(corr.abs(), mask=mask, annot=False, cmap='viridis', ax=ax)
 ax.set_xticklabels(ax.get_xticklabels(), rotation=90);
 
 with pm.Model() as model:
-    μ_a = pm.Normal("μ_a", logit(y.mean()), sigma=0.5)
-    a = hierarchical_normal("a", μ=μ_a, shape=n_intervals)
+    μ_a = pm.Normal("μ_a", logit(y.mean()), sigma=0.35)
+    a = hierarchical_normal("a", μ=μ_a, sigma=0.20, shape=n_intervals)
     
-    μ_b = pm.Normal("μ_b", mu=0, sigma=0.25)
-    σ_b = pm.HalfNormal("σ_b", 0.25)
-    b = pm.Normal("b", mu=μ_b, sigma=σ_b, shape=X.shape[1])
+    μ_b = pm.Normal("μ_b", mu=0, sigma=0.35)
+    b = hierarchical_normal("b", μ=μ_b, sigma=0.20, shape=X.shape[1])
     
-    # likelihood
-    phat = tinvcloglog(pm.math.dot(X, b) + a[A] + np.log(E))
-    yobs = pm.Bernoulli('yobs', p=phat, observed=y)
-    
-    #xbeta = pm.math.dot(X, b) + a[A] + np.log(E)
-    #yobs = pm.Poisson("yobs", mu=pm.math.exp(xbeta), observed=y)
+    xbeta = pm.Deterministic("xbeta", a[A] + pm.math.dot(X, b))
+    yobs = pm.Poisson("yobs", mu=pm.math.exp(xbeta) * E, observed=y)
 
-with model:
-    prior = pm.sample_prior_predictive()
-sns.distplot(prior["yobs"].mean(axis=0))
+# +
+# %%time
+
+yo = []
+for i in np.arange(1):
+    prior = pm.sample_prior_predictive(model=model)
+    yo.append([prior["yobs"].min(), prior["yobs"].max()])
+yo_df = pd.DataFrame(yo, columns=["ymin", "ymax"])
+# -
+
+sns.distplot(np.exp(prior["xbeta"]).mean(axis=0))
+
+rate_df = pd.DataFrame(np.exp(prior["xbeta"]), columns=s_3_df.index.get_level_values(0)).T
+(rate_df.apply(max, axis=1)).quantile(q=np.linspace(0,1,5))
 
 obs_df = s_3_df.groupby(["state", "start"]).agg(n=("note_id", "count"), y=(dep_var, np.mean))
 sns.distplot(obs_df.y, kde=False)
@@ -314,7 +335,7 @@ n_tune = 1000
 with model:
     trace = pm.sample(
         n_draws, tune=n_tune, random_seed=RANDOM_SEED,
-        target_accept=0.95,
+        target_accept=0.99,
         # init="advi+adapt_diag"
     )
 
@@ -366,21 +387,28 @@ def pairplot_divergence(trace, ax=None, divergence=True, color='C3', divergence_
 pairplot_divergence(trace);
 # -
 
+posterior_predictive = pm.sample_posterior_predictive(trace, model=model)
+y_hat = posterior_predictive["yobs"].mean(axis=0)
+sns.distplot(posterior_predictive["yobs"].mean(axis=0))
+
 # ## Analyze
 
 a_names = ["t_" + str(x) for x in np.arange(n_intervals)]
 b_names = obs_covars + [pop_covars]
 
 pooled_data = az.from_pymc3(
-    trace=trace, 
-    model=model, coords={'covars': b_names, 'intercepts': a_names}, 
+    trace=trace, prior=prior, model=model, 
+    posterior_predictive=posterior_predictive,
+    coords={'covars': b_names, 'intercepts': a_names}, 
     dims={'b': ['covars'], 'a': ['intercepts']}
 )
 
 az.plot_pair(
-    pooled_data, var_names=["b"], coords={"covars": ["std_fico", "std_pct_ic"]},
+    pooled_data, var_names=["b"], coords={"covars": ["std_fico_0", "std_pct_ic"]},
     divergences=True,
 );
+
+az.summary(pooled_data, var_names=["a_σ", "b_σ"], round_to=3)
 
 sns.pairplot(
     pd.DataFrame(trace["b"][:,:6], columns=b_names[:6]),
@@ -398,7 +426,10 @@ az.plot_forest(pooled_data, var_names=["a"], combined=True);
 
 az.plot_forest(pooled_data, var_names=["b"], combined=True);
 
-az.plot_trace(pooled_data, var_names=["b"]);
+az.plot_trace(
+    pooled_data, var_names=["b"], 
+    coords={"covars": ["std_fico_0", "std_fico_1", "std_pct_ic", "std_age"]}
+);
 
 enc = OneHotEncoder()
 enc.fit(s_3_df[["start"]])
@@ -427,10 +458,10 @@ loo
 fname, out_dict = save_results(
     ORIGINATOR, "pooled", ASOF_DATE, model, trace, 
     hard_df, hard_df_train, hard_df_test, s_3_df, 
-    p_s_1, p_s_2, p_s_3, knots, loo, None,
+    p_s_1, p_s_2, p_s_3, loo, None,
     numeric_features, categorical_features,
     group_features, group_type, dep_var, pop_covars,
-    exp_covars, generic
+    exp_covars, obs_covars,
 )
 
 save_output = True
@@ -438,38 +469,11 @@ if save_output:
     with open("results/" + fname, "wb") as f:
         joblib.dump(out_dict, f)
 
-
 # ## Validation
 
-def predict_pooled(df, trace):
-    ''' make predictions on test data '''
-    
-    s_1_df = p_s_1.transform(df)
-    s_2_df = p_s_2.transform(s_1_df)
-    s_3_df = p_s_3.transform(s_2_df)
-    
-    X = s_3_df[obs_covars + [pop_covars]]
-    E = s_3_df[exp_covars].values
-    A = s_3_df["a_indx"].values
-    
-    a = trace["a"]
-    b = trace["b"]
-    
-    xbeta = np.dot(X, b.T)
-    phat = invcloglog(xbeta + a[:, A].T + np.log(E[:, np.newaxis]))
-    
-    return phat, s_3_df
-
-
-# +
-# %%time
-
-pooled_ppc, out_df = predict_pooled(hard_df_test, trace)
-# -
-
 pooled_ppc, out_df =  predict(
-    None, hard_df_test, dep_var, ic_long_df, ASOF_DATE, "pooled", out_dict,
-    n_samples=4000, verbose=False
+    None, hard_df_test, dep_var, out_dict, None, n_samples=4000, 
+    verbose=False
 )
 
 # +
@@ -516,7 +520,7 @@ zzz_df = zzz.groupby("start").agg(
 fig, ax = plt.subplots(1, 1, figsize=(10, 5))
 
 ax.plot(zzz_df["start"], zzz_df["ymean"], label="Predicted")
-ax.scatter(zzz_df["start"], zzz_df["y"], label="Actual")
+ax.scatter(zzz_df["start"], zzz_df["y"], label="Actual", color="red")
 
 ax.fill_between(
     zzz_df["start"], zzz_df["y5"], zzz_df["y95"], color="red", alpha=0.05, label="95% Interval"
@@ -540,7 +544,7 @@ zzz_df = zzz.groupby("start").agg(
 
 fig, ax = plt.subplots(1,1, figsize=(10, 5))
 
-ax.scatter(zzz_df["start"], zzz_df["y"], label="observed")
+ax.scatter(zzz_df["start"], zzz_df["y"], label="observed", color="red")
 ax.plot(zzz_df["start"], zzz_df["ymean"], label="predicted")
 ax.fill_between(
     zzz_df["start"], zzz_df["ymean"] - 2*zzz_df["ystd"], 
@@ -551,9 +555,12 @@ ax.legend(loc="upper left");
 # -
 α = pooled_out.iloc[:n_intervals]["mean"]
 β = pooled_out.iloc[n_intervals:]["mean"]
+U = None
+c = None
+d = None
 dp_dx = pd.DataFrame(
     {"param": b_names, 
-     "dp_dx": 10000 * np.array([d_cinvloglog(X, A, α, β, i) for i, v in enumerate(b_names)])}
+     "dp_dx": 10000 * np.array([d_poisson(X, A, U, E, α, β, c, d, v, "pooled", False) for i, v in enumerate(b_names)])}
 )
 
 fig, ax = plt.subplots(1, 1, figsize=(10, 6))
@@ -565,8 +572,7 @@ ax.set_xlabel("dP/dX (bps)");
 # %%time
 
 zzz = forecast_hazard(
-    hard_df_test, dep_var, "pooled", out_dict, claims_dict, ASOF_DATE, 
-    datetime.date(2020, 9, 30)
+    hard_df_test, dep_var, out_dict, claims_dict, datetime.date(2020, 9, 30)
 )
 
 zzz_df = zzz.groupby(level=1).agg(

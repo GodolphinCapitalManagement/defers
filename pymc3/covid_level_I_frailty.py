@@ -141,6 +141,7 @@ group_features = ["st_code", "originator"]
 group_type = "crossed"
 
 dep_var = "defer"
+frailty = True
 
 # +
 # %%time
@@ -245,6 +246,7 @@ U = s_3_df[pop_covars].values
 E = s_3_df[exp_covars].values
 
 A = s_3_df["a_indx"].values
+O = s_3_df["level_1"].values
 # -
 
 print(
@@ -252,7 +254,7 @@ print(
 )
 
 plt.figure(figsize=(10, 10))
-corr = s_3_df[obs_covars + [pop_covars]].corr() #stage_three_df.iloc[:, :35].corr() 
+corr = s_3_df[obs_covars + [pop_covars]].corr()
 mask = np.tri(*corr.shape).T 
 sns.heatmap(corr.abs(), mask=mask, annot=False, cmap='viridis')
 plt.xticks(rotation=60);
@@ -302,8 +304,16 @@ with pm.Model() as model:
     c = hierarchical_normal("c", μ=c_μ, sigma=0.2, shape=state_count)
     
     # likelihood    
-    xbeta = a[A] + pm.math.dot(X, b) + c[st_idx] * U
-    yobs = pm.Poisson('yobs', mu=pm.math.exp(xbeta) * E, observed=y)
+    xbeta = a[A] + pm.math.dot(X, b) + c[st_idx] * U + np.log(E)
+
+    if frailty:
+        # log-normal frailty
+        γ_μ = pm.Normal("γ_μ", mu=0.0, sigma=1, shape=2)
+        γ = hierarchical_normal("γ", μ=γ_μ, sigma=1, shape=2)
+        xbeta += γ[orig_idx]
+        
+    rate = pm.math.exp(xbeta)
+    yobs = pm.Poisson('yobs', mu=rate, observed=y)
 
 # ### Hierarchical
 
@@ -314,7 +324,7 @@ prior["yobs"].max(), prior["yobs"].min()
 
 sns.distplot(prior["yobs"].mean(axis=0))
 
-sns.distplot(prior["c"].mean(axis=0))
+sns.distplot(prior["γ"].mean(axis=0))
 
 obs_df = s_3_df.groupby(["state", "start"]).agg(n=("note_id", "count"), k=(dep_var, np.sum), y=(dep_var, np.mean))
 sns.distplot(obs_df.y, kde=False)
@@ -377,6 +387,10 @@ loo
 # -
 
 # ## Summary
+
+az.plot_trace(hier_data, var_names=["γ_μ", "γ_σ"]);
+
+az.summary(hier_data, var_names=["γ_μ", "γ_σ", "γ"], round_to=3)
 
 # ### Hierarchical
 
@@ -441,9 +455,10 @@ az.plot_rank(hier_data, var_names=("b_μ"));
 a = a_out["mean"]
 b = b_out["mean"]
 c = trace["c_μ"].mean()
+d = trace["γ_μ"].mean()
 
 dp_dx = pd.DataFrame(
-    {"param": b_names, "dp_dx": 10000 * np.array([d_poisson(X, A, U, E, a, b, c, v, "hier") for v in b_names])}
+    {"param": b_names, "dp_dx": 10000 * np.array([d_poisson(X, A, U, E, a, b, c, d, v, "hier", frailty) for v in b_names])}
 )
 
 fig, ax = plt.subplots(1, 1, figsize=(10, 6))
@@ -452,14 +467,15 @@ ax.set_ylabel("Parameter")
 ax.set_xlabel("dP/dX (bps)");
 
 # +
+a = a_out["mean"]
+b = b_out["mean"]
+d = trace["γ_μ"].mean()
+    
 cbeta_d = []
 for i, v in enumerate(state_index_map.state):
-    a = a_out["mean"]
-    b = b_out["mean"]
-    
     indx = state_index_map.set_index("state").loc[v, "level_0"]
     c = trace["c"][:, indx].mean()
-    dp_dx =  10000 * np.array(d_poisson(X, A, U, E, a, b, c, "std_pct_ic", "hier"))
+    dp_dx =  10000 * np.array(d_poisson(X, A, U, E, a, b, c, d, "std_pct_ic", "hier", frailty))
     cbeta_d.append([v, dp_dx])
 
 cbeta_df = pd.DataFrame(cbeta_d, columns=["state", "ame"])
@@ -480,7 +496,7 @@ fname, out_dict = save_results(
     p_s_1, p_s_2, p_s_3, loo, None,
     numeric_features, categorical_features,
     group_features, group_type, dep_var, pop_covars,
-    exp_covars, obs_covars,
+    exp_covars, obs_covars, frailty
 )
 
 save_output = True

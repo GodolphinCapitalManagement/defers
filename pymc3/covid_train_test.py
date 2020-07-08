@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 cspell: disable-*-
 # ---
 # jupyter:
 #   jupytext:
@@ -181,6 +181,7 @@ knots
 p_s_1 = Pipeline(
     steps=[
         ('select_originator', SelectOriginator(ORIGINATOR)),
+        ('winsorize', Winsorize(["stated_monthly_income"], p=0.01)),
         ('wide_to_long', WideToLong(id_col="note_id", duration_col="dur", event_col=dep_var)),
         ('add_state_macro_vars', AddStateMacroVars(ic_long_df)),
     ]
@@ -295,20 +296,20 @@ with pm.Model() as model:
     #
     σ_prior = np.zeros(X.shape[1])
     σ_prior[0] = 1.0
-    σ_prior[1:] = 0.2
+    σ_prior[1:] = 1.0
     
     # globals for coefficients
     
     # global mean for a
     g_μ = pm.Normal("g_μ", mu=μ_prior, sigma=σ_prior, shape=X.shape[1])
-    g_σ = pm.HalfNormal("g_σ", sigma=0.2, shape=X.shape[1])
+    g_σ = pm.HalfNormal("g_σ", sigma=1.0, shape=X.shape[1])
             
     # state-level means for a, creates params st_μ_Δ and st_μ_σ
     # level.
             
     st_μ_Δ = pm.Normal('st_μ_Δ', 0., 1., shape=(state_count, X.shape[1]))
     st_μ = pm.Deterministic('st_μ', g_μ + st_μ_Δ * g_σ)
-    st_μ_σ = pm.HalfNormal('st_μ_σ', sigma=0.2, shape=(state_count, X.shape[1]))
+    st_μ_σ = pm.HalfNormal('st_μ_σ', sigma=1.0, shape=(state_count, X.shape[1]))
     
     st_orig_μ_Δ = pm.Normal(
         'st_orig_μ_Δ', 0, 1., shape=(state_originator_count, X.shape[1])
@@ -553,7 +554,7 @@ if save_output:
 us_states = gpd.read_file("https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip")
 # us_counties = gpd.read_file("https://www2.census.gov/geo/tiger/GENZ2019/shp/cb_2019_us_county_20m.zip")
 
-fig, ax = plt.subplots(1, figsize=(15, 18))
+fig, ax = plt.subplots(1, 1, figsize=(15, 18))
 ax = map_claims("II", sum_out, ax, us_states, states_df)
 
 # ## In-sample validation
@@ -562,9 +563,12 @@ ax = map_claims("II", sum_out, ax, us_states, states_df)
 
 posterior_predictive = pm.sample_posterior_predictive(trace, model=model)
 y_hat = posterior_predictive["yobs"].mean(axis=0)
+sns.distplot(posterior_predictive["yobs"].mean(axis=0))
+
+
 
 # +
-_, ax = plt.subplots(figsize=(10, 5))
+_, ax = plt.subplots(1, 1, figsize=(10, 5))
 
 ax.hist(y_hat, bins=19, alpha=0.5)
 ax.axvline(s_3_df[dep_var].mean())
@@ -576,27 +580,6 @@ ax.axvline(pctile[0], color="red", linestyle=":")
 ax.axvline(pctile[1], color="red", linestyle=":")
 
 ax.text(1.2 * s_3_df[dep_var].mean(), 0.85 * ax.get_ylim()[1], f'95% HPD: [{pctile[0]:.2%}, {pctile[1]:.2%}]');
-
-# +
-# %%time
-
-aaa, out_df =  predict(
-    None, hard_df_train, dep_var, ic_long_df, ASOF_DATE, "hier", out_dict,
-    n_samples=1000, verbose=False
-)
-
-# +
-_, ax = plt.subplots(figsize=(10, 5))
-
-ax.hist(aaa.mean(axis=0), bins=19, alpha=0.5)
-ax.axvline(out_df[dep_var].mean())
-ax.set(xlabel='Deferment Pct.', ylabel='Frequency')
-ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0))
-pctile = np.percentile(aaa.mean(axis=0), q=[5, 95])
-ax.axvline(pctile[0], color="red", linestyle=":")
-ax.axvline(pctile[1], color="red", linestyle=":")
-
-ax.text(1.2 * out_df[dep_var].mean(), 0.85 * ax.get_ylim()[1], f'95% HPD: [{pctile[0]:.2%}, {pctile[1]:.2%}]');
 # -
 
 # ## Out-of-sample validation
@@ -604,32 +587,37 @@ ax.text(1.2 * out_df[dep_var].mean(), 0.85 * ax.get_ylim()[1], f'95% HPD: [{pcti
 # +
 # %%time
 
-aaa, out_df =  predict(
+hier_ppc, out_df = predict(
     None, hard_df_test, dep_var, ic_long_df, ASOF_DATE, "hier", out_dict,
-    n_samples=1000, verbose=False
+    n_samples=4000, verbose=False
 )
 # +
-_, ax = plt.subplots(figsize=(10, 5))
+_, ax = plt.subplots(1, 1, figsize=(10, 5))
 
-ax.hist(aaa.mean(axis=0), bins=19, alpha=0.5)
+ax.hist(hier_ppc.mean(axis=0), bins=19, alpha=0.5)
 ax.axvline(out_df[dep_var].mean())
+
 ax.set(xlabel='Deferment Pct.', ylabel='Frequency')
 ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0))
-pctile = np.percentile(aaa.mean(axis=0), q=[5, 95])
+
+pctile = np.percentile(hier_ppc.mean(axis=0), q=[5, 95])
 ax.axvline(pctile[0], color="red", linestyle=":")
 ax.axvline(pctile[1], color="red", linestyle=":")
 
-ax.text(1.2 * out_df[dep_var].mean(), 0.85 * ax.get_ylim()[1], f'95% HPD: [{pctile[0]:.2%}, {pctile[1]:.2%}]');
+_ = ax.text(
+    1.65 * out_df[dep_var].mean(), 0.85 * ax.get_ylim()[1], 
+    f'95% HPD: [{pctile[0]:.2%}, {pctile[1]:.2%}]'
+)
 
 # +
-pctile = np.percentile(aaa, q=[5, 95], axis=0).T
+pctile = np.percentile(hier_ppc, q=[5, 95], axis=0).T
     
 zzz = pd.concat(
     [
         out_df, pd.DataFrame(
             np.hstack(
                 (
-                    aaa.mean(axis=0).reshape(-1, 1), aaa.std(axis=0).reshape(-1, 1),
+                    hier_ppc.mean(axis=0).reshape(-1, 1), hier_ppc.std(axis=0).reshape(-1, 1),
                     pctile
                 )
             ), 
@@ -637,23 +625,24 @@ zzz = pd.concat(
         )
     ], axis=1
 )
-# +
+
 zzz["fhaz"] = zzz.groupby(level=0).agg(chaz=("ymean", np.cumsum))["chaz"].map(lambda x: 1 - np.exp(-x))
-zzz_df = zzz.groupby("stop").agg(
+zzz_df = zzz.groupby("start").agg(
     y=(dep_var, np.mean), ymean=("ymean", np.mean), ystd=("ystd", np.mean),
     y5=("y5", np.mean), y95=("y95", np.mean)
 ).reset_index()
 
 fig, ax = plt.subplots(1, 1, figsize=(10, 5))
 
-ax.plot(zzz_df["stop"], zzz_df["ymean"], label="Predicted")
-ax.scatter(zzz_df["stop"], zzz_df["y"], label="Actual")
+ax.plot(zzz_df["start"], zzz_df["ymean"], label="Predicted")
+ax.scatter(zzz_df["start"], zzz_df["y"], label="Actual", color="red")
 
 ax.fill_between(
-    zzz_df["stop"], zzz_df["y5"], zzz_df["y95"], color="red", alpha=0.05, label="95% Interval"
+    zzz_df["start"], zzz_df["y5"], zzz_df["y95"], color="red", alpha=0.05, label="95% Interval"
 )
 ax.set(xlabel='Week', ylabel='Hazard')
 ax.legend(loc="upper right");
+
 # +
 # %%time
 

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 cspell: disable -*-
 # ---
 # jupyter:
 #   jupytext:
@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.5.0
+#       jupytext_version: 1.3.2
 #   kernelspec:
 #     display_name: dev
 #     language: python
@@ -21,6 +21,7 @@ import datetime
 
 import warnings
 warnings.simplefilter(action="ignore", category=FutureWarning)
+warnings.simplefilter(action="ignore", category=UserWarning)
 # -
 
 import pandas as pd
@@ -86,7 +87,7 @@ ASOF_DATE = min(
 
 override_asof_date = True
 if override_asof_date:
-    ASOF_DATE = datetime.date(2020, 6, 30)
+    ASOF_DATE = datetime.date(2020, 7, 2)
 
 print(f'As Of Date: {ASOF_DATE}')
 
@@ -109,40 +110,51 @@ with open(external_files_dir + "claims.pkl", "rb") as f:
     claims_dict = joblib.load(f)
 
 horizon_date = datetime.date(2020, 9, 30)
-dep_var = "distress"
+dep_var = "defer"
 
-test_df = out_dict["hier"]["test"]
+zzz = out_dict["hier"]["s_3_df"]
+
+zzz = zzz[zzz["originator"] == omap["LC"]].copy()
+a_df = zzz.groupby(["state"]).agg(
+    n=("loan_id", "count"), k=(dep_var, np.sum), distress=(dep_var, np.mean),
+    pct_ic=("pct_ic", np.mean)
+  ).reset_index().rename(columns={"distress": dep_var})
 
 # +
-data_scaler = (
-    out_dict["hier"]["pipe"]["p_s_2"].named_steps["standardize"].numeric_transformer.named_steps["scaler"]
+g = sns.FacetGrid(
+    data=a_df.reset_index(),
 )
+g.map(sns.regplot, "pct_ic", dep_var, ci=True)
+g.ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0))
 
-numeric_features = [
-    "fico", "original_balance", "dti", "stated_monthly_income", "age", "pct_ic"
-]
+# add annotations one by one with a loop
+for line in range(0, a_df.shape[0]):
+    g.ax.text(
+        a_df["pct_ic"][line]+0.001, a_df[dep_var][line], a_df["state"][line], 
+        horizontalalignment='left', size='medium', color='red', 
+        weight='semibold', alpha=0.20
+    )
 
-data_scaler_dict = {
-    "mu" : dict(zip(numeric_features, data_scaler.mean_)),
-    "sd":  dict(zip(numeric_features, data_scaler.scale_))
-}
+g.ax.figure.set_size_inches(10, 5)
+g.ax.set_xlabel("Year-over-Year pct. change")
+g.ax.set_ylabel("Distress hazard");
 # -
 
-sub_df = make_df(test_df, dep_var, ASOF_DATE, horizon_date)
+test_df = out_dict["hier"]["test"]
+sub_df = make_df(test_df, dep_var, horizon_date)
 
 # +
 # %%time
 
 aaa, zzz, _ = simulate(
-    None, sub_df, dep_var, claims_dict["chg_df"], ASOF_DATE, 
-    "hier", out_dict, numeric_features, True
+    None, sub_df, dep_var, "hier", out_dict, claims_dict["chg_df"]
 )
 zzz.set_index(["loan_id", "edate"], inplace=True)
 zzz.sort_index(inplace=True)
 # -
 
 zzz["fhaz"] = zzz.groupby(level=0).agg(chaz=("ymean", np.cumsum))["chaz"].map(lambda x: 1 - np.exp(-x))
-zzz_df = zzz.groupby("stop").agg(
+zzz_df = zzz.groupby("start").agg(
     y=(dep_var, np.mean), ymean=("ymean", np.mean),
     ystd=("ystd", np.mean), y5=("y5", np.mean), y95=("y95", np.mean)
 ).reset_index()
@@ -175,9 +187,9 @@ ax[0].set_xlabel("Deferment Pct.")
 
 # hazards
 
-ax[1].plot(zzz_df["stop"], zzz_df["ymean"], label="Predicted")
+ax[1].plot(zzz_df["start"], zzz_df["ymean"], label="Predicted")
 ax[1].fill_between(
-    zzz_df["stop"], zzz_df["y5"], 
+    zzz_df["start"], zzz_df["y5"], 
     zzz_df["y95"], color="red", alpha=0.05, label="95% Interval"
 )
 
@@ -193,336 +205,174 @@ hier_data = hier_result.az_data
 
 pooled_result = make_az_data("pooled", out_dict)
 pooled_data = pooled_result.az_data
+
+# +
+X = hier_result.X
+A = hier_result.A
+U = hier_result.U
+E = hier_result.E 
+
+a_names = hier_result.a_names
+b_names = hier_result.b_names
+
+a = hier_result.a_out["mean"]
+b = hier_result.b_out["mean"]
+c = hier_result.trace["c_μ"].mean()
+d = hier_result.trace["γ_μ"].mean()
 # -
 
-st_orig_out = hier_result.sum_out
+p_s_2 = out_dict["hier"]["pipe"]["p_s_2"]
+non_poly_vars =  list(
+    set(b.index) - set(np.array(p_s_2.named_steps.poly.colnames).ravel().tolist())
+)
+
+dp_dx = pd.DataFrame(
+    {"param": non_poly_vars, 
+    "dp_dx": 10000 * np.array(
+      [d_poisson(X, A, U, E, a, b, c, d, v, "hier", True) for i, v in enumerate(non_poly_vars)]
+      )
+    }
+)
 
 # +
-fig, axes = plt.subplots(7, 2, figsize=(20, 40), sharex=True)
+fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+sns.barplot(data=dp_dx, y="param", x="dp_dx", ax=ax)
+ax.set_ylabel("Parameter")
+_ = ax.set_xlabel("dP/dX (bps)")
 
-for feature, ax in zip(hier_result.b_names, axes.flatten()):
-    f_d = []
-    for v in states_df.state:
-        f_d.append([v, covar_diff(v, feature, st_orig_out)])
-    
-    f_df = pd.DataFrame(f_d, columns=["state", "β_diff"])
-    sns.barplot(y="β_diff", x="state", data=f_df, ax=ax)
-    ax.set_title(feature)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, size=8)
-    
-plt.tight_layout()
+#dp_dx_df = dp_dx.set_index("param")
 
 # +
-states = states_df.state.to_list()
 b_names = hier_result.b_names
     
 X = hier_result.X
 A = hier_result.A
+U = hier_result.U 
 E = hier_result.E
 
-α = hier_result.μ_a_out["mean"]
-    
-dp = []
-for state in states:    
-    try:
-        β = hier_result.st_out.loc[state, "mean"]
-    except KeyError:
-        continue
-    
-    dp.append(
-        pd.DataFrame(
-            {"state": [state] * len(b_names), "param": b_names,
-             "dp_dx": 10000 * np.array([d_cinvloglog(X, A, α, β, i) for i, v in enumerate(b_names)])}
-        )
-    )
-dp_df = pd.concat(dp)
+a = hier_result.a_out["mean"]
+b = hier_result.b_out["mean"]
+d = hier_result.trace["γ_μ"].mean()
+
+cbeta_d = []
+for i, v in enumerate(hier_result.state_index_map.state):
+
+    indx = hier_result.state_index_map.set_index("state").loc[v, "level_0"]
+    c = hier_result.trace["c"][:, indx].mean()
+    dp_dx =  10000 * np.array(d_poisson(X, A, U, E, a, b, c, d, "std_pct_ic", "hier", True))
+    cbeta_d.append([v, dp_dx])
+
+cbeta_df = pd.DataFrame(cbeta_d, columns=["state", "ame"])
+cbeta_df.sort_values(by=["ame"], ascending=False, inplace=True)
 # -
-
-fig, ax = plt.subplots(1,1, figsize=(10, 6))
-sns.boxplot(data=dp_df, y="param", x="dp_dx", ax=ax)
-ax.set_yticklabels(ax.get_yticklabels(), rotation=30, size=9)
-ax.set_ylabel("Parameter")
-ax.set_xlabel("dP/dX (bps)");
-
-1-np.exp(-(5/10000)*52)
-
-s_3_df = out_dict["hier"]["s_3_df"]
-
-# +
-# %%time
-
-aaa = ame_vec("FL", out_dict["hier"]["s_3_df"], out_dict["hier"]["trace"], "std_original_balance", b_names)
-bbb = ame_vec("NY", out_dict["hier"]["s_3_df"], out_dict["hier"]["trace"], "std_original_balance", b_names)
-ccc = abs(aaa["sim"] - bbb["sim"])
-# -
-
-fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-sns.distplot(10000 * ccc, kde=False, ax=ax)
-ax.axvline((10000 * ccc).mean(), color="red", label="Mean")
-ax.axvline((5), color="blue", label="Cutoff")
-ax.set_xlabel("AME difference (bps)")
-ax.set_ylabel("Frequency")
-plt.legend(loc="upper right")
-print(f'{(ccc > 5/10000).sum()/ccc.shape[0]:.2%}')
-
-# +
-# %%time
-
-compare_dict = {"hierarchical": hier_data, "pooled": pooled_data}
-az.compare(compare_dict)
-# -
-
-# ### Validation: pooled
 
 horizon_date = ASOF_DATE
-asof_date = CRISIS_START_DATE
 n_samples = 4000
 
 # +
 # %%time
 
-fff, t0 = predict_survival_function(
-    out_dict["pooled"]["test"], dep_var, numeric_features, 
-    "pooled", out_dict["pooled"], claims_dict, asof_date, horizon_date
-)
-
-# +
-_na_cum_haz = fff.groupby("orig_grade", observed=True).apply(
-        na_cum_haz, "dur", "distress"
-    )
-_na_cum_haz.index.set_names(["orig_grade", "mob"], inplace=True)
-
-_obs_surv = pd.merge(
-    fff.groupby("orig_grade").agg(poutcome=("poutcome", np.mean)),
-    _na_cum_haz.groupby(level=0).last().apply(lambda x: 1 - np.exp(-x)), 
-    left_index=True, right_index=True
-)    
+do_loo = True
+if do_loo:
+    compare_dict = {"hierarchical": hier_data, "pooled": pooled_data}
+    compare_tbl = az.compare(compare_dict)
 # -
 
-obs_surv_df = _obs_surv.reset_index()
-obs_surv_df = pd.concat(
-    [
-        obs_surv_df,
-        obs_surv_df["orig_grade"].str.split(":", expand=True).rename(columns={0: "originator", 1: "grade"})
-    ], axis=1
-).drop(columns=["orig_grade"])
+compare_tbl
 
-obs_surv_df.sort_values(by=["originator", "poutcome"])
-
-# +
-g = sns.FacetGrid(
-    data=obs_surv_df.sort_values(by=["originator", "poutcome"]),
-    hue="grade", col="originator",
-    height=5, # aspect=1.2,
-    margin_titles=True
-)
-g.map(sns.scatterplot, "poutcome", "obs_cumhaz").add_legend(title="Grade")
-for ax in g.axes:
-    for i in ax:
-        i.plot(obs_surv_df.poutcome, obs_surv_df.poutcome, c="k", ls="--");
-        
-g.set_titles("{col_name}")  # use this argument literally
-g.set_axis_labels(x_var="Predicted", y_var="Observed");
+# ### Validation
 
 # +
 # %%time
 
-do_reps = False
-if do_reps:
-    alist = []
-    blist = []
-    for i in progress_bar(range(100)):
-        a_df, b_df = calibration_plot(t0, fff, i)
-        alist.append(a_df)
-        blist.append(b_df)
-
-    alist_df = pd.concat(alist)
-    blist_df = pd.DataFrame(blist, columns=["sim", "pct_50", "pct_95"])
-    print(blist_df.describe())
-else:
-    alist_df, blist_df = calibration_plot(t0, fff, None)
-    print(f'E50: {blist_df[1]:.2%}, E95: {blist_df[2]:.2%}') 
-
-# +
-color = "tab:red"
-sns.set_style("white")
-
-_, ax = plt.subplots(1, 1, figsize=(8, 5))
-    
-ax.plot(alist_df.x, alist_df.y, label="smoothed calibration curve", color=color, alpha=0.5)
-ax.set_xlabel("Predicted probability of \nt ≤ %.1f mortality" % t0)
-ax.set_ylabel("Observed probability of \nt ≤ %.1f mortality" % t0, color=color)
-ax.tick_params(axis="y", labelcolor=color)
-
-# plot x=y line
-ax.plot(alist_df.x, alist_df.x, c="k", ls="--", alpha=0.5)
-ax.legend(loc = "lower right")
-
-# plot histogram of our original predictions
-color = "tab:blue"
-twin_ax = ax.twinx()
-twin_ax.set_ylabel("Count of \npredicted probabilities", color=color)  # we already handled the x-label with ax1
-twin_ax.tick_params(axis="y", labelcolor=color)
-twin_ax.hist(fff["poutcome"], alpha=0.3, bins="sqrt", color=color)
-
-plt.tight_layout()
-sns.set()
-# -
-
-# ### Validation: hierarchical
-
-# +
-# %%time
-
-fff, t0 = predict_survival_function(
-    out_dict["hier"]["test"], dep_var, numeric_features, 
-    "hier", out_dict["hier"], claims_dict, asof_date, horizon_date
-)
-
-# +
-_na_cum_haz = fff.groupby("orig_grade", observed=True).apply(
-        na_cum_haz, "dur", "distress"
-    )
-_na_cum_haz.index.set_names(["orig_grade", "mob"], inplace=True)
-
-_obs_surv = pd.merge(
-    fff.groupby("orig_grade").agg(poutcome=("poutcome", np.mean)),
-    _na_cum_haz.groupby(level=0).last().apply(lambda x: 1 - np.exp(-x)), 
-    left_index=True, right_index=True
-)    
-# -
-
-obs_surv_df = _obs_surv.reset_index()
-obs_surv_df = pd.concat(
-    [
-        obs_surv_df,
-        obs_surv_df["orig_grade"].str.split(":", expand=True).rename(columns={0: "originator", 1: "grade"})
-    ], axis=1
-).drop(columns=["orig_grade"])
-
-obs_surv_df.sort_values(by=["originator", "poutcome"])
-
-# +
-g = sns.FacetGrid(
-    data=obs_surv_df.sort_values(by=["originator", "poutcome"]),
-    hue="grade", col="originator",
-    height=5, # aspect=1.2,
-    margin_titles=True
-)
-g.map(sns.scatterplot, "poutcome", "obs_cumhaz").add_legend(title="Grade")
-for ax in g.axes:
-    for i in ax:
-        i.plot(obs_surv_df.poutcome, obs_surv_df.poutcome, c="k", ls="--");
-        
-g.set_titles("{col_name}")  # use this argument literally
-g.set_axis_labels(x_var="Predicted", y_var="Observed");
-
-# +
-# %%time
-
-do_reps = False
-if do_reps:
-    alist = []
-    blist = []
-    for i in progress_bar(range(100)):
-        a_df, b_df = calibration_plot(t0, fff, i)
-        alist.append(a_df)
-        blist.append(b_df)
-
-    alist_df = pd.concat(alist)
-    blist_df = pd.DataFrame(blist, columns=["sim", "pct_50", "pct_95"])
-    print(blist_df.describe())
-else:
-    alist_df, blist_df = calibration_plot(t0, fff, None)
-    print(f'E50: {blist_df[1]:.2%}, E95: {blist_df[2]:.2%}') 
-
-# +
-color = "tab:red"
-sns.set_style("white")
-
-_, ax = plt.subplots(1, 1, figsize=(8, 5))
-    
-ax.plot(alist_df.x, alist_df.y, label="smoothed calibration curve", color=color, alpha=0.5)
-ax.set_xlabel("Predicted probability of \nt ≤ %.1f mortality" % t0)
-ax.set_ylabel("Observed probability of \nt ≤ %.1f mortality" % t0, color=color)
-ax.tick_params(axis="y", labelcolor=color)
-
-# plot x=y line
-ax.plot(alist_df.x, alist_df.x, c="k", ls="--", alpha=0.5)
-ax.legend(loc = "lower right")
-
-# plot histogram of our original predictions
-color = "tab:blue"
-twin_ax = ax.twinx()
-twin_ax.set_ylabel("Count of \npredicted probabilities", color=color)  # we already handled the x-label with ax1
-twin_ax.tick_params(axis="y", labelcolor=color)
-twin_ax.hist(fff["poutcome"], alpha=0.3, bins="sqrt", color=color)
-
-plt.tight_layout()
-sns.set()
-
-# +
 pooled_fff, t0 = predict_survival_function(
-    out_dict["pooled"]["test"], dep_var, numeric_features, 
-    "pooled", out_dict["pooled"], claims_dict, asof_date, horizon_date
+    out_dict["pooled"]["test"], dep_var, out_dict["pooled"], 
+    claims_dict, ASOF_DATE
 )
 
-pooled_alist_df, pooled_blist_df = calibration_plot(t0, pooled_fff, None)
-#print(f'E50: {blist_df[1]:.2%}, E95: {blist_df[2]:.2%}') 
+pooled_alist_df, pooled_blist_df = glm_calibration_plot(pooled_fff, dep_var, None)
 
 hier_fff, t0 = predict_survival_function(
-    out_dict["hier"]["test"], dep_var, numeric_features, 
-    "hier", out_dict["hier"], claims_dict, asof_date, horizon_date
+    out_dict["hier"]["test"], dep_var, out_dict["hier"], 
+    claims_dict, ASOF_DATE
 )
-hier_alist_df, hier_blist_df = calibration_plot(t0, hier_fff, None)
+hier_alist_df, hier_blist_df = glm_calibration_plot(hier_fff, dep_var, None)
+# -
+_, pool_calib = calibration_data(pooled_fff, dep_var)
+_, hier_calib = calibration_data(hier_fff, dep_var)
 
 # +
+fig, ax = plt.subplots(1, 2, figsize=(10, 6))
 color = "tab:red"
-sns.set_style("white")
 
-_, ax = plt.subplots(1, 2, figsize=(10, 5), sharex=True)
+calib_dict = {
+    "Pooled": pool_calib,
+    "Mixed": hier_calib
+}
+
+i = 0
+for k, v in calib_dict.items():
+    max_x = v["poutcome"].max() + 0.01
+    ax[i].scatter(v["poutcome"], v["observed"], color=color, label=k)
+    ax[i].plot(np.linspace(0, max_x,100), np.linspace(0, max_x,100), c="k", ls="--")
+
+    ax[i].set_xlabel("Predicted probability of \nt ≤ %.1f deferment" % t0)
+    ax[i].set_ylabel("Observed probability of \nt ≤ %.1f deferment" % t0, color=color)
+    ax[i].tick_params(axis="y", labelcolor=color)
+    ax[i].legend(loc = "upper left")
     
-ax[0].plot(pooled_alist_df.x, pooled_alist_df.y, label="Pooled", color=color, alpha=0.5)
-ax[0].set_ylim(0, 1)
+    i += 1
 
-ax[0].set_xlabel("Predicted probability of \nt ≤ %.1f mortality" % t0)
-ax[0].set_ylabel("Observed probability of \nt ≤ %.1f mortality" % t0, color=color)
-ax[0].tick_params(axis="y", labelcolor=color)
+plt.tight_layout()
+# +
+# sns.set_style("white")
 
-# plot x=y line
-ax[0].plot(np.linspace(0,1,10), np.linspace(0,1,10), c="k", ls="--", alpha=0.5)
-ax[0].legend(loc = "upper center")
+_, ax = plt.subplots(1, 2, figsize=(10, 5), sharex=False)
 
 # plot histogram of our original predictions
 color = "tab:blue"
 twin_ax = ax[0].twinx()
 twin_ax.set_ylabel("Count of \npredicted probabilities", color=color)  # we already handled the x-label with ax1
 twin_ax.tick_params(axis="y", labelcolor=color)
-twin_ax.hist(pooled_fff["poutcome"], alpha=0.2, bins="sqrt", color=color)
+twin_ax.hist(pooled_fff["poutcome"], bins="sqrt", color=color, alpha=0.2)
+twin_ax.grid(None)
 
-# now do hierarchical
 color = "tab:red"
-    
-ax[1].plot(hier_alist_df.x, hier_alist_df.y, label="Hierarchical", color=color, alpha=0.5)
-ax[0].set_ylim(0, 1)
+ax[0].plot(pooled_alist_df.x, pooled_alist_df.y, label="Pooled", color=color)
 
-ax[1].set_xlabel("Predicted probability of \nt ≤ %.1f mortality" % t0)
-ax[1].set_ylabel("Observed probability of \nt ≤ %.1f mortality" % t0, color=color)
-ax[1].tick_params(axis="y", labelcolor=color)
+ax[0].set_xlabel("Predicted probability of \nt ≤ %.1f mortality" % t0)
+ax[0].set_ylabel("Observed probability of \nt ≤ %.1f mortality" % t0, color=color)
+ax[0].tick_params(axis="y", labelcolor=color)
 
 # plot x=y line
-ax[1].plot(np.linspace(0,1,10), np.linspace(0,1,10), c="k", ls="--", alpha=0.5)
-ax[1].legend(loc = "upper center")
+ax[0].plot(np.linspace(0, pooled_fff.poutcome.max() + 0.01, 100),
+           np.linspace(0, pooled_fff.poutcome.max() + 0.01, 100),
+           c="k", ls="--")
+ax[0].legend(loc = "upper center")
+
+# now do hierarchical
 
 # plot histogram of our original predictions
 color = "tab:blue"
 twin_ax = ax[1].twinx()
 twin_ax.set_ylabel("Count of \npredicted probabilities", color=color)  # we already handled the x-label with ax1
 twin_ax.tick_params(axis="y", labelcolor=color)
-twin_ax.hist(hier_fff["poutcome"], alpha=0.2, bins="sqrt", color=color)
+twin_ax.hist(hier_fff["poutcome"], bins="sqrt", color=color, alpha=0.2)
+
+color = "tab:red"
+ax[1].plot(hier_alist_df.x, hier_alist_df.y, label="Hierarchical", color=color)
+ax[1].set_xlabel("Predicted probability of \nt ≤ %.1f mortality" % t0)
+ax[1].set_ylabel("Observed probability of \nt ≤ %.1f mortality" % t0, color=color)
+ax[1].tick_params(axis="y", labelcolor=color)
+
+# plot x=y line
+ax[1].plot(np.linspace(0, hier_fff.poutcome.max() + 0.01, 100),
+           np.linspace(0, hier_fff.poutcome.max() + 0.01, 100),
+           c="k", ls="--")
+ax[1].legend(loc = "upper center")
+twin_ax.grid(None)
 
 plt.tight_layout()
-sns.set()
 # -
 
 ici_df = pd.DataFrame.from_dict(
@@ -534,7 +384,9 @@ ici_df = pd.DataFrame.from_dict(
 ici_df.index = ["E50", "E95", "Mean"]
 ici_df
 
-# %watermark -a GyanSinha -n -u -v -iv -w 
+calibrate_by_grade(pooled_fff, dep_var)
+
+calibrate_by_grade(hier_fff, dep_var)
 
 # +
 # %%time
@@ -554,5 +406,6 @@ for u, v in zip(top_states, ax.flatten()):
     
 plt.tight_layout()
 # -
+# %watermark -a GyanSinha -n -u -v -iv -w 
 
 
