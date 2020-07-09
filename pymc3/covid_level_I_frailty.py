@@ -509,7 +509,7 @@ us_states = gpd.read_file("https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_201
 # +
 merged_us_states_c = pd.merge(us_states, cbeta_df, left_on="STUSPS", right_on="state", how="right")
 
-fig, ax = plt.subplots(1, figsize=(15, 18))
+fig, ax = plt.subplots(1, 1, figsize=(15, 18))
 
 albers_epsg = 2163
 ax = us_states[~us_states["STATEFP"].isin(['02', '15'])].to_crs(epsg=albers_epsg).plot(
@@ -533,7 +533,7 @@ hier_ppc_train, out_df = predict(
 )
 
 # +
-_, ax = plt.subplots(figsize=(10, 5))
+_, ax = plt.subplots(1, 1, figsize=(10, 5))
 
 ax.hist(hier_ppc_train.mean(axis=0), bins=19, alpha=0.5)
 ax.axvline(out_df[dep_var].mean())
@@ -556,7 +556,7 @@ hier_ppc_test, out_df =  predict(
     n_samples=1000, verbose=False
 )
 # +
-_, ax = plt.subplots(figsize=(10, 5))
+_, ax = plt.subplots(1, 1, figsize=(10, 5))
 
 ax.hist(hier_ppc_test.mean(axis=0), bins=19, alpha=0.5)
 ax.axvline(out_df[dep_var].mean())
