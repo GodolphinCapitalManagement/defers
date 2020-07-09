@@ -1,8 +1,8 @@
-# -*- coding: utf-8 cspell: disable-*-
+# -*- coding: utf-8 -*-
 # ---
 # jupyter:
 #   jupytext:
-#     formats: ipynb,py:light
+#     formats: ipynb,py
 #     text_representation:
 #       extension: .py
 #       format_name: light
@@ -554,7 +554,7 @@ if save_output:
 us_states = gpd.read_file("https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip")
 # us_counties = gpd.read_file("https://www2.census.gov/geo/tiger/GENZ2019/shp/cb_2019_us_county_20m.zip")
 
-fig, ax = plt.subplots(1, 1, figsize=(15, 18))
+fig, ax = plt.subplots(1, figsize=(15, 18))
 ax = map_claims("II", sum_out, ax, us_states, states_df)
 
 # ## In-sample validation
@@ -568,7 +568,7 @@ sns.distplot(posterior_predictive["yobs"].mean(axis=0))
 
 
 # +
-_, ax = plt.subplots(1, 1, figsize=(10, 5))
+_, ax = plt.subplots(figsize=(10, 5))
 
 ax.hist(y_hat, bins=19, alpha=0.5)
 ax.axvline(s_3_df[dep_var].mean())
@@ -592,7 +592,7 @@ hier_ppc, out_df = predict(
     n_samples=4000, verbose=False
 )
 # +
-_, ax = plt.subplots(1, 1, figsize=(10, 5))
+_, ax = plt.subplots(figsize=(10, 5))
 
 ax.hist(hier_ppc.mean(axis=0), bins=19, alpha=0.5)
 ax.axvline(out_df[dep_var].mean())
