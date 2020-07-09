@@ -319,6 +319,9 @@ for k, v in calib_dict.items():
     ax[i].set_xlabel("Predicted probability of \nt ≤ %.1f deferment" % t0)
     ax[i].set_ylabel("Observed probability of \nt ≤ %.1f deferment" % t0, color=color)
     ax[i].tick_params(axis="y", labelcolor=color)
+    
+    for j in v.itertuples():
+        ax[i].text(j.poutcome - 0.001, j.observed - 0.01, j[0])
     ax[i].legend(loc = "upper left")
     
     i += 1
