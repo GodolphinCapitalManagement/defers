@@ -1387,18 +1387,22 @@ def make_az_data(model_type, out_dict):
         
         st_c_out = az.summary(az_data, var_names=["c"], round_to=3)
         st_c_out.index = state_index_map.state.to_list()
-
+        
+        g_out = az.summary(
+            az_data, var_names=["γ_μ", "γ_σ", "γ"], round_to=3
+        )
+        
         Result = collections.namedtuple(
             'inference', 
             'trace az_data a_μ_out a_out b_μ_out b_out st_c_out '
             'numeric_features a_names b_names c_names X A U E state_index_map '
-            'n_intervals'
+            'n_intervals g_out'
         )
     
         return Result(
             trace, az_data, a_μ_out, a_out, b_μ_out, b_out, st_c_out,
             numeric_features, a_names, b_names, c_names, X, A, U, E, state_index_map, 
-            n_intervals
+            n_intervals, g_out
         )
 
 
