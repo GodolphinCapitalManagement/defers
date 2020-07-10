@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.5.0
+#       jupytext_version: 1.3.2
 #   kernelspec:
 #     display_name: dev
 #     language: python
@@ -115,9 +115,9 @@ ASOF_DATE = min(
     now if now > today6pm else now - datetime.timedelta(days=1)
 ).date()
 
-override_asof_date = False
+override_asof_date = True
 if override_asof_date:
-    ASOF_DATE = datetime.date(2020, 6, 24)
+    ASOF_DATE = datetime.date(2020, 7, 2)
 
 print(f'As Of Date: {ASOF_DATE}')
 # -
@@ -161,13 +161,6 @@ for i in ["PR", "LC"]:
 hard_df = pd.concat(df, sort=False, ignore_index=True)
 hard_df.drop_duplicates(subset=["loan_id"], keep="first", inplace=True, ignore_index=True)
 # -
-dq_tbl = summary_by_group(
-    ["originator", "loanstatus"], dep_var, hard_df
-)
-dq_tbl.index.names = ["Originator", "DQ Status"]
-
-dq_tbl
-
 # ### Nelson-Aalen Hazards
 
 # +
@@ -303,23 +296,13 @@ with pm.Model() as model:
     xbeta = pm.Deterministic("xbeta", a[A] + pm.math.dot(X, b))
     yobs = pm.Poisson("yobs", mu=pm.math.exp(xbeta) * E, observed=y)
 
-# +
-# %%time
+prior = pm.sample_prior_predictive(model=model)
 
-yo = []
-for i in np.arange(1):
-    prior = pm.sample_prior_predictive(model=model)
-    yo.append([prior["yobs"].min(), prior["yobs"].max()])
-yo_df = pd.DataFrame(yo, columns=["ymin", "ymax"])
-# -
-
-sns.distplot(np.exp(prior["xbeta"]).mean(axis=0))
-
-rate_df = pd.DataFrame(np.exp(prior["xbeta"]), columns=s_3_df.index.get_level_values(0)).T
-(rate_df.apply(max, axis=1)).quantile(q=np.linspace(0,1,5))
-
-obs_df = s_3_df.groupby(["state", "start"]).agg(n=("note_id", "count"), y=(dep_var, np.mean))
-sns.distplot(obs_df.y, kde=False)
+fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+sns.distplot([x for x in prior["yobs"].mean(axis=1)], ax=ax)
+ax.axvline(y.mean(), color="tab:red", label="Sample μ")
+ax.axvline(np.array([x for x in prior["yobs"].mean(axis=1)]).mean(), color="tab:blue", label="Prior μ")
+ax.legend()
 
 model
 
@@ -461,10 +444,10 @@ fname, out_dict = save_results(
     p_s_1, p_s_2, p_s_3, loo, None,
     numeric_features, categorical_features,
     group_features, group_type, dep_var, pop_covars,
-    exp_covars, obs_covars,
+    exp_covars, obs_covars, None
 )
 
-save_output = True
+save_output = False
 if save_output:
     with open("results/" + fname, "wb") as f:
         joblib.dump(out_dict, f)

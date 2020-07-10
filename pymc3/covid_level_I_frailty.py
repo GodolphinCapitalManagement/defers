@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.5.0
+#       jupytext_version: 1.3.2
 #   kernelspec:
 #     display_name: dev
 #     language: python
@@ -110,9 +110,9 @@ ASOF_DATE = min(
     now if now > today6pm else now - datetime.timedelta(days=1)
 ).date()
 
-override_asof_date = False
+override_asof_date = True
 if override_asof_date:
-    ASOF_DATE = datetime.date(2020, 6, 24)
+    ASOF_DATE = datetime.date(2020, 7, 2)
 
 print(f'As Of Date: {ASOF_DATE}')
 
@@ -304,7 +304,7 @@ with pm.Model() as model:
     c = hierarchical_normal("c", μ=c_μ, sigma=0.2, shape=state_count)
     
     # likelihood    
-    xbeta = a[A] + pm.math.dot(X, b) + c[st_idx] * U + np.log(E)
+    xbeta = pm.Deterministic("xbeta", a[A] + pm.math.dot(X, b) + c[st_idx] * U + np.log(E))
 
     if frailty:
         # log-normal frailty
@@ -322,12 +322,11 @@ with model:
 
 prior["yobs"].max(), prior["yobs"].min()
 
-sns.distplot(prior["yobs"].mean(axis=0))
-
-sns.distplot(prior["γ"].mean(axis=0))
-
-obs_df = s_3_df.groupby(["state", "start"]).agg(n=("note_id", "count"), k=(dep_var, np.sum), y=(dep_var, np.mean))
-sns.distplot(obs_df.y, kde=False)
+fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+sns.distplot([x for x in prior["yobs"].mean(axis=1)], ax=ax)
+ax.axvline(y.mean(), color="tab:red", label="Sample μ")
+ax.axvline(np.array([x for x in prior["yobs"].mean(axis=1)]).mean(), color="tab:blue", label="Prior μ")
+ax.legend()
 
 model
 

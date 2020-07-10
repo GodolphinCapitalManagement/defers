@@ -34,6 +34,7 @@ import sqlalchemy
 import patsy
 from numba import jit
 
+import matplotlib.pyplot as plt
 import seaborn as sns
 
 import pymc3 as pm
@@ -1406,6 +1407,47 @@ def make_az_data(model_type, out_dict):
         )
 
 
+def ame_obs_var(trace, ppc):
+    ''' average marginal effect for poisson link function 
+        params:
+            trace: 
+            ppc:
+
+        returns:
+            vector of prob derivatives of length nsamples
+    '''
+    n_samples = ppc.shape[0]
+    return (trace[:n_samples, np.newaxis] * ppc).mean(axis=1)
+
+
+def plot_ame(out_dict, model_type, ppc):
+    ''' plots average marginal effects '''
+    
+    b_names = (
+        out_dict[model_type]["obs_covars"] + ["std_pct_ic"] if 
+        model_type == "pooled" else out_dict[model_type]["obs_covars"]
+    )
+    p_s_2 = out_dict[model_type]["pipe"]["p_s_2"]
+    non_poly_vars =  list(
+        set(b_names) - set(np.array(p_s_2.named_steps.poly.colnames).ravel().tolist())
+    )
+    
+    dp_dx = []
+    for i, v in enumerate(b_names):
+        trace = out_dict[model_type]["trace"]["b"][:, i]
+        dp_dx.append(10000 * pd.Series(ame_obs_var(trace, ppc), name=v))
+        
+    dp_dx_df = pd.melt(pd.concat(dp_dx, axis=1))
+    
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10/1.61803))
+    sns.boxplot(
+        data=dp_dx_df[dp_dx_df.variable.isin(non_poly_vars + ["std_pct_ic"])], 
+        y="variable", x="value", ax=ax
+    )
+    ax.set_ylabel("Parameter")
+    _ = ax.set_xlabel("dP/dX (bps)")
+
+
 def d_poisson(X, A, U, E, a, b, c, d, v, model_type, frailty):
     ''' average marginal effect for poisson link function 
         params:
@@ -1929,5 +1971,24 @@ def calibration_data(df, dep_var):
     )
     
     return aaa, bbb
+
+
+def _repr_latex_(model, name=None, dist=None):
+    ''' extracted from pymc3 repo for possible modification '''
+    tex_vars = []
+    for rv in itertools.chain(model.unobserved_RVs, model.observed_RVs):
+        rv_tex = rv.__latex__()
+        if rv_tex is not None:
+            array_rv = rv_tex.replace(r"\sim", r"&\sim &").strip("$")
+            tex_vars.append(array_rv)
+    return r"""$$
+        \begin{{array}}{{rcl}}
+        {}
+        \end{{array}}
+        $$""".format(
+        "\\\\".join(tex_vars)
+    )
+
+
 
 

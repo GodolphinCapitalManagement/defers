@@ -226,21 +226,45 @@ non_poly_vars =  list(
     set(b.index) - set(np.array(p_s_2.named_steps.poly.colnames).ravel().tolist())
 )
 
-dp_dx = pd.DataFrame(
-    {"param": non_poly_vars, 
-    "dp_dx": 10000 * np.array(
-      [d_poisson(X, A, U, E, a, b, c, d, v, "hier", True) for i, v in enumerate(non_poly_vars)]
-      )
-    }
+pooled_ppc, out_df =  predict(
+    None, out_dict["pooled"]["train"], dep_var, out_dict["pooled"], 
+    None, n_samples=4000, verbose=False
+)
+hier_ppc, out_df =  predict(
+    None, out_dict["hier"]["train"], dep_var, out_dict["hier"], 
+    None, n_samples=4000, verbose=False
 )
 
-# +
-fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-sns.barplot(data=dp_dx, y="param", x="dp_dx", ax=ax)
-ax.set_ylabel("Parameter")
-_ = ax.set_xlabel("dP/dX (bps)")
+plot_ame(out_dict, "pooled", pooled_ppc)
 
-#dp_dx_df = dp_dx.set_index("param")
+plot_ame(out_dict, "hier", hier_ppc)
+
+# +
+cbeta_d = []
+for i, v in enumerate(hier_result.state_index_map.state):
+
+    indx = hier_result.state_index_map.set_index("state").loc[v, "level_0"]
+    trace = hier_result.trace["c"][:, indx]
+    x = pd.Series(ame_obs_var(trace, hier_ppc), name=v)
+    cbeta_d.append(
+        pd.DataFrame(
+            np.quantile(x, q=[0.025, 0.50, 0.975]).reshape(-1, 3),
+            columns=["lo", "med", "hi"]
+        )
+    )
+    
+cbeta_df = pd.DataFrame(10000 * pd.concat(cbeta_d)).reset_index()
+cbeta_df["state"] = hier_result.state_index_map.state
+cbeta_df.sort_values("med", ascending=False, inplace=True)
+
+# +
+fig, ax = plt.subplots(1, 1, figsize=(12, 12/1.61))
+
+ax.vlines(cbeta_df.state, cbeta_df.lo, cbeta_df.hi, "tab:red")
+ax.scatter(cbeta_df.state, cbeta_df.med, color="tab:blue")
+plt.setp(ax.get_xticklabels(), ha="right", size=9, rotation=30)
+ax.set_xlabel("State")
+ax.set_ylabel("dP/dX (bps)");
 
 # +
 b_names = hier_result.b_names
@@ -268,6 +292,7 @@ cbeta_df.sort_values(by=["ame"], ascending=False, inplace=True)
 
 horizon_date = ASOF_DATE
 n_samples = 4000
+print(az.rcParams["stats.information_criterion"])
 
 # +
 # %%time
@@ -275,10 +300,10 @@ n_samples = 4000
 do_loo = True
 if do_loo:
     compare_dict = {"hierarchical": hier_data, "pooled": pooled_data}
-    compare_tbl = az.compare(compare_dict)
+    compare_tbl = az.compare(compare_dict, ic="loo")
 # -
 
-compare_tbl
+compare_tbl.style.set_precision(2)
 
 # ### Validation
 
@@ -298,8 +323,8 @@ hier_fff, t0 = predict_survival_function(
 )
 hier_alist_df, hier_blist_df = glm_calibration_plot(hier_fff, dep_var, None)
 # -
-_, pool_calib = calibration_data(pooled_fff, dep_var)
-_, hier_calib = calibration_data(hier_fff, dep_var)
+pool_raw, pool_calib = calibration_data(pooled_fff, dep_var)
+hier_raw, hier_calib = calibration_data(hier_fff, dep_var)
 
 # +
 fig, ax = plt.subplots(1, 2, figsize=(10, 6))
@@ -327,6 +352,13 @@ for k, v in calib_dict.items():
     i += 1
 
 plt.tight_layout()
+# -
+hard_df[
+    hard_df["loan_id"].isin(
+        hier_raw[hier_raw["decile"].isin(["6", "7"])].index
+    )
+]["fico"].plot(kind="hist")
+
 # +
 # sns.set_style("white")
 
@@ -385,7 +417,7 @@ ici_df = pd.DataFrame.from_dict(
     }
 )
 ici_df.index = ["E50", "E95", "Mean"]
-ici_df
+ici_df.style.set_precision(4)
 
 calibrate_by_grade(pooled_fff, dep_var)
 
@@ -408,7 +440,20 @@ for u, v in zip(top_states, ax.flatten()):
     v.set_ylabel("Hazard")
     
 plt.tight_layout()
+# +
+fig, ax = plt.subplots(1, 2, figsize=(10, 5), sharex=True)
+
+pooled_prior = pm.sample_prior_predictive(model=out_dict["pooled"]["model"], random_seed=12345)
+sns.distplot([x.mean() for x in (pooled_prior["yobs"].mean(axis=1))], ax=ax[0], label="Pooled")
+
+hier_prior = pm.sample_prior_predictive(model=out_dict["hier"]["model"], random_seed=12345)
+sns.distplot([x.mean() for x in (hier_prior["yobs"].mean(axis=1))], ax=ax[1], label="Hierarchical")
+for i in ax:
+    i.set_xlabel("Poisson λ")
+    i.set_ylabel("Frequency")
+    i.axvline(out_dict["pooled"]["s_3_df"][dep_var].mean(), color="tab:red", label="Sample μ")
+    i.axvline(np.array([x.mean() for x in (hier_prior["yobs"].mean(axis=1))]).mean(), color="tab:blue", label="Prior μ")
+    i.legend()
 # -
+
 # %watermark -a GyanSinha -n -u -v -iv -w 
-
-
