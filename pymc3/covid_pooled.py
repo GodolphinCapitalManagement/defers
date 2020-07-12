@@ -1,4 +1,4 @@
-# -*- coding: utf-8 cspell: disable-*-
+# -*- coding: utf-8 cspell: disable -*-
 # ---
 # jupyter:
 #   jupytext:
@@ -34,6 +34,8 @@ from fastprogress.fastprogress import master_bar, progress_bar
 # -
 
 # %load_ext watermark
+
+from scipy.special import logit
 
 import lifelines
 from lifelines import KaplanMeierFitter, NelsonAalenFitter
@@ -115,7 +117,7 @@ ASOF_DATE = min(
     now if now > today6pm else now - datetime.timedelta(days=1)
 ).date()
 
-override_asof_date = True
+override_asof_date = False
 if override_asof_date:
     ASOF_DATE = datetime.date(2020, 7, 2)
 
@@ -296,7 +298,7 @@ with pm.Model() as model:
     xbeta = pm.Deterministic("xbeta", a[A] + pm.math.dot(X, b))
     yobs = pm.Poisson("yobs", mu=pm.math.exp(xbeta) * E, observed=y)
 
-prior = pm.sample_prior_predictive(model=model)
+prior = pm.sample_prior_predictive(model=model, random_seed=RANDOM_SEED)
 
 fig, ax = plt.subplots(1, 1, figsize=(10, 5))
 sns.distplot([x for x in prior["yobs"].mean(axis=1)], ax=ax)

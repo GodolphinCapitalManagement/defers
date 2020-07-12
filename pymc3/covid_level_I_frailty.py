@@ -32,6 +32,8 @@ import feather
 
 # %load_ext watermark
 
+from scipy.special import logit
+
 # +
 import pymc3 as pm
 import arviz as az
@@ -110,7 +112,7 @@ ASOF_DATE = min(
     now if now > today6pm else now - datetime.timedelta(days=1)
 ).date()
 
-override_asof_date = True
+override_asof_date = False
 if override_asof_date:
     ASOF_DATE = datetime.date(2020, 7, 2)
 
@@ -317,8 +319,7 @@ with pm.Model() as model:
 
 # ### Hierarchical
 
-with model:
-    prior = pm.sample_prior_predictive(random_seed=RANDOM_SEED)
+prior = pm.sample_prior_predictive(model=model, random_seed=RANDOM_SEED)
 
 prior["yobs"].max(), prior["yobs"].min()
 

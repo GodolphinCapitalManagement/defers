@@ -16,13 +16,11 @@
 
 # +
 import os
-import re
+
 import joblib
 import itertools
 import collections
-import socket
 
-from re import search
 
 import datetime
 from datetime import timedelta
@@ -42,16 +40,15 @@ import arviz as az
 import theano.tensor as tt
 
 from scipy.special import expit
-from scipy.special import logit
+
 import scipy.interpolate as si
 
 # +
-from sklearn.preprocessing import StandardScaler, OrdinalEncoder, OneHotEncoder
-from sklearn.preprocessing import add_dummy_feature, FunctionTransformer
-from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder
+from sklearn.preprocessing import add_dummy_feature, OneHotEncoder
 
 from sklearn.base import TransformerMixin, BaseEstimator
-from sklearn.pipeline import Pipeline, FeatureUnion
+from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 # -
 
@@ -59,11 +56,9 @@ import lifelines
 import us
 
 import statsmodels.api as sm
-import statsmodels.formula.api as smf
 
 # +
 from lifelines import NelsonAalenFitter
-from lifelines.fitters.crc_spline_fitter import CRCSplineFitter
 from lifelines import CoxPHFitter
 
 from lifelines.utils import survival_table_from_events
@@ -201,13 +196,10 @@ def post_covid_zbal(start_date, asof_date):
         "where note_id in ( "
         "    select note_id from consumer.csummary "
         "    where trade_date::date = :start_date "
-        # "    and loanstatus = 'Current' "
         ") "
         " "
         "and (snaptime::date >= :start_date and snaptime::date <= :asof_date "
         "and loanstatus = 'Fully Paid') "
-        # "or (snaptime::date > :start_date and snaptime::date <= :asof_date "
-        # "and dayspastdue > 12 and loanstatus = 'In Grace Period') "
         "or (snaptime::date >= :start_date and snaptime::date <= :asof_date "
         "and loanstatus = 'Charged Off') "
         "order by note_id, snaptime;"
@@ -231,17 +223,35 @@ def post_covid_defers(start_date, asof_date):
         "where note_id in ( "
         "    select note_id from consumer.csummary "
         "    where trade_date::date = :start_date "
-        # "    and loanstatus = 'Current' "
         ") "
         "and startdate >= :start_date and startdate <= :asof_date "
         "order by note_id, snaptime;"
     )
 
-    defer_df = pd.read_sql(
+    hard_df = pd.read_sql(
         q_stmt, con=initdb.gcm_engine,
         params={"start_date": start_date, "asof_date": asof_date}
     )
-    defer_df["event"] = "Defer"
+    hard_df["event"] = "Defer"
+    
+    q_stmt = sqlalchemy.sql.text(
+        "select distinct on(note_id) note_id, startdate as event_date "
+        "from consumer.pmtdrop "
+        "where note_id in ( "
+        "    select note_id from consumer.csummary "
+        "    where trade_date::date = :start_date "
+        ") "
+        "and startdate >= :start_date and startdate <= :asof_date "
+        "order by note_id, snaptime;"
+    )
+    
+    pmtdrop_df = pd.read_sql(
+        q_stmt, con=initdb.gcm_engine,
+        params={"start_date": start_date, "asof_date": asof_date}
+    )
+    pmtdrop_df["event"] = "Defer"
+    
+    defer_df = pd.concat([hard_df, pmtdrop_df], ignore_index=True)
 
     return defer_df
 
@@ -714,11 +724,11 @@ class SelectOriginator(TransformerMixin):
             self.grade_type = pd.api.types.CategoricalDtype(
                 categories=grades, ordered=True
             )
-            
+
         X_["grade"] = X_["grade"].astype(self.grade_type)
-               
+
         return X_
-    
+
     def fit(self, X, y=None):
         return self
 
@@ -989,34 +999,6 @@ def gen_labor_risk_df(fname, external_files_dir):
     return risk_df
 
 
-def gen_open_table_df(fname, external_files_dir):
-    open_df = pd.read_csv(
-        external_files_dir + fname
-    ).melt(
-        id_vars=["Type", "Name"], var_name="obsdate", value_name="yoy"
-    ).rename(columns={"Name": "name"})
-
-    open_df["obsdate"] = open_df["obsdate"].map(lambda x: pd.to_datetime("2020/" + x).date())
-
-    open_df = open_df[open_df["Type"] == "state"].drop(
-        columns=["Type"]
-    ).rename(
-        columns={"name": "st_name"}
-    ).reset_index(drop=True)
-    open_df["yoy"] /= 100
-    
-    states_df = pd.DataFrame(
-        [[x.abbr, x.fips, x.name] for x in us.STATES], 
-        columns=["state", "st_code", "st_name"]
-    )
-    states_df = states_df.append(pd.DataFrame([["DC", "11"]], columns=["state", "st_code"]))
-    states_df.sort_values(by=["st_code"], inplace=True)
-    
-    open_df = pd.merge(open_df, states_df, on="st_name", how="left")
-    open_df = open_df[~pd.isnull(open_df["state"])].reset_index(drop=True)
-    
-    return open_df
-
 
 def cubic_linear_spline(x, kn):
     z = np.minimum((x - kn) * 0.1, 0)
@@ -1148,6 +1130,7 @@ def predict(originator, df, dep_var, out_dict, ic_long_df, n_samples=1000, verbo
     trace = out_dict["trace"]
     group_type = out_dict["group_type"]
     model_type = out_dict["model_type"]
+    frailty = None
     if model_type == "hier":
         frailty = out_dict["frailty"]
     
