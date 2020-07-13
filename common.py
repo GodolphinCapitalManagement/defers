@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.3.2
+#       jupytext_version: 1.5.1
 #   kernelspec:
 #     display_name: dev
 #     language: python
@@ -930,12 +930,12 @@ class HierarchicalIndex(TransformerMixin, BaseEstimator):
         
         if self.group_type == "nested":
             # create state cluster IDs
-            self.grp_0_index = X.groupby(self.group_vars[0]).all().reset_index().reset_index()[
-                ['level_0', self.group_vars[0]]
-            ]
-            self.grp_0_grp_1_index = X.groupby(self.group_vars).all().reset_index().reset_index()[
-                ['level_0'] + self.group_vars
-            ]
+            self.grp_0_index = X.groupby(self.group_vars[0]).all().reset_index().reset_index().rename(
+                columns={"index": "level_0"}
+            )[['level_0', self.group_vars[0]]]
+            self.grp_0_grp_1_index = X.groupby(self.group_vars).all().reset_index().reset_index().rename(
+                columns={"index": "level_0"}
+            )[['level_0'] + self.group_vars]
 
             self.grp_0_grp_1_indexes_df = pd.merge(
                 self.grp_0_index, self.grp_0_grp_1_index, how='inner', on=self.group_vars[0], 
@@ -948,12 +948,13 @@ class HierarchicalIndex(TransformerMixin, BaseEstimator):
             self.grp_0_grp_1_indexes = self.grp_0_grp_1_indexes_df['level_0_0'].values
             self.grp_0_grp_1_count = len(self.grp_0_grp_1_indexes)
         else:
-            self.grp_0_index = X.groupby(self.group_vars[0]).all().reset_index().reset_index()[
-                ['level_0', self.group_vars[0]]
-            ]
-            self.grp_1_index = X.groupby(self.group_vars[1]).all().reset_index().reset_index()[
-                ["level_0", self.group_vars[1]]
-            ].rename(columns={"level_0": "level_1"})
+            self.grp_0_index = X.groupby(self.group_vars[0]).all().reset_index().reset_index().rename(
+                columns={"index": "level_0"}
+            )[['level_0', self.group_vars[0]]]
+            self.grp_1_index = X.groupby(self.group_vars[1]).all().reset_index().reset_index().rename(
+                columns={"index": "level_0"})[["level_0", self.group_vars[1]]].rename(
+                columns={"level_0": "level_1"}
+            )
             
             self.grp_0_indexes = self.grp_0_index["level_0"].values
             self.grp_0_count = len(self.grp_0_indexes)
@@ -1249,10 +1250,9 @@ def simulate(originator, df, dep_var, model_type, out_dict, ic_long_df=None):
 
 def save_results(originator, model_type, asof_date, model, trace,
                  hard_df, hard_df_train, hard_df_test, s_3_df, p_s_1, 
-                 p_s_2, p_s_3, loo, waic, numeric_features,
-                 categorical_features, group_features, group_type,
-                 dep_var, pop_covars, exp_covars, obs_covars,
-                 frailty):
+                 p_s_2, p_s_3, numeric_features, categorical_features,
+                 group_features, group_type, dep_var, pop_covars, 
+                 exp_covars, obs_covars, frailty):
     
     ''' pickles results for future use '''
     
@@ -1265,7 +1265,6 @@ def save_results(originator, model_type, asof_date, model, trace,
     out_dict = {
         "model": model, "trace": trace, "pipe": pipe, "hard_df": hard_df, 
         "train": hard_df_train, "test": hard_df_test, "s_3_df": s_3_df,
-        "loo": loo, "waic": waic,
         "numeric_features": numeric_features, 
         "categorical_features": categorical_features,
         "group_features": group_features, "group_type": group_type,
@@ -1973,5 +1972,25 @@ def _repr_latex_(model, name=None, dist=None):
     )
 
 
+def make_ppc_plot(ppc, out_df, dep_var):
+    ''' make ppc plot '''
+    
+    fig = plt.figure(figsize=(10, 5))
+    ax = fig.gca()
+
+    ax.hist(ppc.mean(axis=1), bins=19, alpha=0.5)
+    ax.axvline(out_df[dep_var].mean(), color="tab:red")
+    ax.set(xlabel='Hazard.', ylabel='Frequency')
+    
+    pctile = np.percentile(ppc.mean(axis=1), q=[5, 95])
+    ax.axvline(pctile[0], color="red", linestyle=":")
+    ax.axvline(pctile[1], color="red", linestyle=":")
+
+    _ = ax.text(
+      0.925 * ax.get_xlim()[1], 0.85 * ax.get_ylim()[1], 
+      f'95% HPD: [{pctile[0]:.3f}, {pctile[1]:.3f}]'
+    )
+
+    return fig
 
 
