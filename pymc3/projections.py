@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.3.2
+#       jupytext_version: 1.5.1
 #   kernelspec:
 #     display_name: dev
 #     language: python
@@ -87,7 +87,7 @@ ASOF_DATE = min(
 
 override_asof_date = True
 if override_asof_date:
-    ASOF_DATE = datetime.date(2020, 7, 2)
+    ASOF_DATE = datetime.date(2020, 7, 12)
 
 print(f'As Of Date: {ASOF_DATE}')
 
@@ -226,11 +226,11 @@ non_poly_vars =  list(
     set(b.index) - set(np.array(p_s_2.named_steps.poly.colnames).ravel().tolist())
 )
 
-pooled_ppc, out_df =  predict(
+pooled_ppc, pooled_out_df =  predict(
     None, out_dict["pooled"]["train"], dep_var, out_dict["pooled"], 
     None, n_samples=4000, verbose=False
 )
-hier_ppc, out_df =  predict(
+hier_ppc, hier_out_df =  predict(
     None, out_dict["hier"]["train"], dep_var, out_dict["hier"], 
     None, n_samples=4000, verbose=False
 )
@@ -352,13 +352,6 @@ for k, v in calib_dict.items():
     i += 1
 
 plt.tight_layout()
-# -
-hard_df[
-    hard_df["loan_id"].isin(
-        hier_raw[hier_raw["decile"].isin(["6", "7"])].index
-    )
-]["fico"].plot(kind="hist")
-
 # +
 # sns.set_style("white")
 
@@ -455,5 +448,9 @@ for i in ax:
     i.axvline(np.array([x.mean() for x in (hier_prior["yobs"].mean(axis=1))]).mean(), color="tab:blue", label="Prior μ")
     i.legend()
 # -
+
+fig = make_ppc_plot(pooled_ppc, pooled_out_df, dep_var)
+
+fig = make_ppc_plot(hier_ppc, hier_out_df, dep_var)
 
 # %watermark -a GyanSinha -n -u -v -iv -w 
