@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.3.2
+#       jupytext_version: 1.5.1
 #   kernelspec:
 #     display_name: dev
 #     language: python
@@ -199,6 +199,8 @@ hard_df_train = hard_df.groupby(['state', 'originator', dep_var], group_keys=Fal
     lambda x: x.sample(frac=0.80, random_state=RANDOM_SEED)
 ).reset_index().copy()
 hard_df_test = hard_df[~hard_df["loan_id"].isin(hard_df_train["loan_id"])].reset_index().copy()
+
+hard_df_train.shape, hard_df_test.shape, hard_df.shape
 
 # ### Transform
 
@@ -449,7 +451,7 @@ fname, out_dict = save_results(
     exp_covars, obs_covars, None
 )
 
-save_output = False
+save_output = True
 if save_output:
     with open("results/" + fname, "wb") as f:
         joblib.dump(out_dict, f)
