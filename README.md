@@ -2,7 +2,7 @@
 
 This repo contains scripts that process the data and estimate the parameters
 of a survival model in a mixed-model Bayesian framework and presented in
-[Loan Payment Deferments Due to Labor Market Shocks: A Case Study}]
+[Loan Payment Deferments Due to Labor Market Shocks: A Case Study]
 (https://github.com/GodolphinCapitalManagement/corona/corona.pdf). While the files
 in this repo are all python scripts, they are derived from jupyter notebooks using
 the Jupytext extension and can be converted to such using the
