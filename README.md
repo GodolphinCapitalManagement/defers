@@ -10,8 +10,8 @@ the Jupytext extension and can be converted to such using the
 
 ## Manifest
 
-common.py: this script contains a set of common functions that get
-used across the various jupyter notebooks.
+[common.py](https://github.com/GodolphinCapitalManagement/defers/tree/master/common.py):
+ this script contains a set of common functions that get used across the various jupyter notebooks.
 
 ### Sub-directories
 
