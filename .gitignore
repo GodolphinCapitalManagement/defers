@@ -11,3 +11,5 @@ __pycache__
 settings.json
 pm_hier_corr.py
 stash.py
+pymc3/covid_level_I.py
+pymc3/covid_train_test.py
