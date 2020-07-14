@@ -634,38 +634,6 @@ class WideToLong(TransformerMixin):
         return self
 
 
-class StandardizePopulationEffects(TransformerMixin):
-    def __init__(self, groups):
-        ''' initialize
-        '''
-        
-        self.groups = groups
-        self.numeric_transformer = Pipeline(
-            steps=[
-                ('imputer', SimpleImputer(strategy='median')),
-                ('scaler', StandardScaler())
-            ]
-        )
-        
-    def fit(self, X, y=None):
-        ''' fit 
-            params:
-                X: state level snapshot of pct in low-risk
-                occupations
-        '''
-        X_ = X[X["state"].isin(self.groups)].copy()
-        self.numeric_transformer.fit(X_[["pct_high_risk"]])
-        
-        return self
-        
-    def transform(self, X):
-        ''' transform '''
-        X_ = X[X["state"].isin(self.groups)].copy()
-        X_ = self.numeric_transformer.transform(X_[["pct_high_risk"]])
-        
-        return add_dummy_feature(X_)
-
-
 class AddStateMacroVars(TransformerMixin):
     def __init__(self, ic_long_df):
         ''' initialize with df containing macro information 
