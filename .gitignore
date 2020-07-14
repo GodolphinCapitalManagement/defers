@@ -7,3 +7,7 @@
 
 stan/*
 __pycache__
+
+settings.json
+pm_hier_corr.py
+stash.py
