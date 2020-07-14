@@ -15,14 +15,19 @@ used across the various jupyter notebooks.
 
 ### Sub-directories
 
-pymc3: contains all the modeling scripts for the paper.
+[pymc3](https://github.com/GodolphinCapitalManagement/defers/tree/master/pymc3):
+  contains all the modeling scripts for the paper.
 
-* covid_pooled.py: pooled version of model
+* [covid_pooled.py](https://github.com/GodolphinCapitalManagement/defers/tree/master/pymc3/covid_pooled.py):
+  pooled version of model
 
-* covid_level_I_fraily.py: mixed model with frailty terms for originators.
+* [covid_level_I_fraily.py](https://github.com/GodolphinCapitalManagement/defers/tree/master/pymc3/covid_level_I_frailty.py):
+  mixed model with frailty terms for originators.
 
-* deferments.py: generic script that estimates both models in one go.
+* [deferment.py](https://github.com/GodolphinCapitalManagement/defers/tree/master/pymc3/deferment.py):
+  generic script that estimates both models in one go.
 
-* projections.py: script for model comparisons using (i) PSIS-LOO and
+* [projections.py](https://github.com/GodolphinCapitalManagement/defers/tree/master/pymc3/projections.py):
+   script for model comparisons using (i) PSIS-LOO and
   (ii) the [Integrated Calibration Index](https://onlinelibrary.wiley.com/doi/full/10.1002/sim.8570)
   approach of Harrell et. al.
